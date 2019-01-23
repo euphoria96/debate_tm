@@ -1,0 +1,352 @@
+#### 데이터 전처리
+rm(list=ls())
+gc()
+# data collecting
+data1 = read.csv('data1/1차_전체질문답변.csv', head = T, stringsAsFactor = F)
+data2 = read.csv('data1/2차_전체질문답변.csv', head = T, stringsAsFactor = F)
+data3 = read.csv('data1/3차_전체질문답변.csv', head = T, stringsAsFactor = F)
+data4 = read.csv('data1/4차_전체질문답변.csv', head = T, stringsAsFactor = F)
+# data check
+str(data1)
+str(data2)
+str(data3)
+str(data4)
+data2 = data2[,-7]
+data3 = data3[-c(341:dim(data3)[1]),-c(7:11)]
+data4 = data4[,-c(7:12)]
+# data preprocessing
+data1$Body = as.character(data1$Body)
+data2$Body = as.character(data2$Body)
+data3$Body = as.character(data3$Body)
+data4$Body = as.character(data4$Body)
+## negative
+data1$Section = ifelse(data1$negative==1,'negative',as.character(data1$Section))
+data1$negative = NULL
+d1=cbind(rep(1,dim(data1)[1]),data1[,2:6])
+d2=cbind(rep(2,dim(data2)[1]),data2[,2:6])
+d3=cbind(rep(3,dim(data3)[1]),data3[,2:6])
+d4=cbind(rep(4,dim(data4)[1]),data4[,2:6])
+colnames(d1)[1]='index';colnames(d2)[1]='index';colnames(d3)[1]='index';colnames(d4)[1]='index'
+dd = rbind(d1,d2,d3,d4)
+dd = subset(dd, To!='negative')
+dd$index = as.factor(dd$index)
+dd$From = as.factor(dd$From)
+dd$To = as.factor(dd$To)
+dd$Section = as.factor(dd$Section)
+dd$Status = as.factor(dd$Status)
+head(dd)
+str(dd)
+#### 데이터 전처리 2
+# rm(list=ls()); gc()
+
+library(stringr)
+library(tm)
+library(topicmodels)
+# Sys.setenv(JAVA_HOME='C:\\Program Files\\Java\\jre-10.0.1')
+library(KoNLP)
+library(NIADic)
+useNIADic()
+#library(rJava)
+#install.packages("NIADic", dependencies=TRUE)
+# setwd("C:/Users/korea/Desktop/Ayeon/TM")
+
+# data <- read.csv("dt_cha.csv", head=TRUE)
+data = dd
+
+data$Body <- as.character(data$Body)
+data$Body <- removeNumbers(data$Body)
+
+dic_f <- function(dic_1, dic_2, data) {
+  result<-data;
+  for(i in 1:length(dic_1)) {
+    result <- gsub(dic_1[i], dic_2[i], result);
+  }
+  return(result);
+} 
+dic_1 <- c("문 후보","문후보","문 의원","문의원",
+           "홍 후보","홍후보","홍 의원","홍의원",
+           "심 후보","심후보","심 의원","심의원",
+           "유 후보","유후보","유 의원","유의원",
+           "안 후보","안후보","안 의원","안의원",
+           "전 대통령","전대통령",
+           "dj",
+           "mb",
+           "518",
+           "r&d", "rnd", "알엔디")
+
+dic_2 <- c(rep("문재인",4), rep("홍준표",4), rep("심상정",4),
+           rep("유승민",4), rep("안철수",4), rep("박근혜",2),
+           "김대중", "이명박", "오일팔", "알앤디")
+
+data$Body <- dic_f(dic_1, dic_2, data$Body)
+
+data$Body <- gsub('\\w*(그것|그거|이것|이거|저것|저거|때문|하지|말씀|우리|하게|번째|대통령|생각|
+                  부분|이야기|하시|그걸|이번|들이|이걸|사실|얘기|입장|해서|
+                  질문|다음|확인|후보|대한|민국|그때|거기|당시)\\w*', '', data$Body)
+
+data$Body <- removePunctuation(data$Body)
+######## 분석 위한 Cps 생성
+a <- extractNoun(data$Body)
+Cps <- Corpus(VectorSource(a))
+Cps <- tm_map(Cps, removeWords, c('character'))
+Tdm <- TermDocumentMatrix(Cps)
+Tdm = Tdm[which(!grepl('않습니|있습니',Tdm$dimnames$Terms)),]
+inspect(bb)
+
+### wordcloud
+termFq = rowSums(as.matrix(Tdm))
+termFq = sort(termFq, decreasing = T)
+termFq = subset(termFq, termFq>15)
+df <- data.frame(term = names(termFq), freq = termFq)
+library(wordcloud2)
+library(RColorBrewer)
+wordcloud2(df, minRotation=0, maxRotation=0, shape='circle', ellipticity=0.50,
+           color='random-light', fontFamily='나눔고딕', shuffle=F)
+### ngram
+library(RWeka)
+bigramTokenizer = function(x) NGramTokenizer(x, Weka_control(min=2, max=3))
+ngram.tdm = TermDocumentMatrix(Cps, control = list(tokenize = bigramTokenizer))
+bigramlist = apply(ngram.tdm[,],1,sum)
+sort(bigramlist, decreasing=T)[1:10]
+
+dtm = DocumentTermMatrix(Cps)
+findFreqTerms(dtm,lowfreq=15)
+findAssocs(dtm, 'act', corlimit = 0.2)
+
+#########네트워크 그리기
+aa=table.prop(dd[,3],dd[,6])
+library(igraph)
+peer = graph.data.frame(aa, directed = T)
+V(peer)$name
+set.seed(1234)
+plot(peer,
+     layout=layout.fruchterman.reingold, 
+     vertex.size = 35,                 
+     vertex.shape = "circle", 
+     vertex.frame.color="skyblue2", 
+     vertex.color = "skyblue", 
+     
+     vertex.label.dist = 0,          
+     vertex.label = V(peer)$name,
+     vertex.label.cex = 0.7,           
+     vertex.label.color="black",  
+     
+     edge.color="red",  
+     edge.lty ="solid",
+     
+     edge.arrow.width=1.0, 
+     edge.arrow.size=0.3
+)
+table(ft)
+ft = subset(dd,select=c('From','To'))
+mat = ft %>% as.vector %>% unique
+vec = c(96,85,79,91,102,81,106,141,109,153,148,78,81,41,162,89,91,21,11,16,18,19,11,37,19,11,19,11,21,12,1,1,1,1,1)
+mat = as.matrix(cbind(mat, vec))
+a = graph.edgelist(mat[,1:2])
+E(a)$weight = as.numeric(mat[,3])
+a.diag = rep(0,36) + 5
+a.name = union(dd$From, dd$To)
+set.seed(123456)
+plot(a,
+     vertex.size = 30,
+     vertex.shape = "circle", 
+     vertex.frame.color="skyblue2", 
+     vertex.color = "skyblue", 
+     
+     vertex.label.dist = 0,          
+     vertex.label = a.name,
+     vertex.label.cex = 1,           
+     vertex.label.color="black",  
+     
+     edge.color=ifelse(E(a)$weight/50>=2,'red','darkblue'),  
+     edge.lty ="solid",
+     edge.width = E(a)$weight/50,
+     
+     edge.arrow.width=E(a)$weight/50, 
+     edge.arrow.size=0.3,
+     
+     edge.label = vec,
+     edge.label.cex = 0.6,
+     edge.label.color = 'black'
+     
+)
+
+
+ft = subset(dd,dd$index==1, select=c('From','To'))
+mat = ft %>% as.vector %>% unique
+vec = c(20,12,8,11,19,8,31,20,29,21,19,17,16,14,19,13,15,8,4,10,10,7,4,13,8,4,8,4,9,4)
+mat = as.matrix(cbind(mat, vec))
+a = graph.edgelist(mat[,1:2])
+E(a)$weight = as.numeric(mat[,3])
+a.name = union(dd$From, dd$To)
+set.seed(123456)
+plot(a,
+     vertex.size = 30,
+     vertex.shape = "circle", 
+     vertex.frame.color="skyblue2", 
+     vertex.color = "skyblue", 
+     
+     vertex.label.dist = 0,          
+     vertex.label = a.name,
+     vertex.label.cex = 1,           
+     vertex.label.color="black",  
+     
+     edge.color=ifelse(E(a)$weight/50>=1,'red','darkblue'),  
+     edge.lty ="solid",
+     edge.width = E(a)$weight/50,
+     
+     edge.arrow.width=E(a)$weight/50, 
+     edge.arrow.size=0.3,
+     
+     edge.label = vec,
+     edge.label.cex = 0.6,
+     edge.label.color = 'black'
+)
+
+ft = subset(dd,dd$index==2, select=c('From','To'))
+mat = ft %>% as.vector %>% unique
+table(ft)
+vec = c(4,2,4,59,38,34,17,18,54,51,6,4,2,22,20,35,36,25,22,4,2,4,2,7,7,3,2,16,16,4,1)
+mat = as.matrix(cbind(mat, vec))
+a = graph.edgelist(mat[,1:2])
+E(a)$weight = as.numeric(mat[,3])
+a.name = union(dd$From, dd$To)
+set.seed(123456)
+
+#### 연관 네트워크 분석
+tdm = TermDocumentMatrix(Noun_cps)
+tds1 <- weightTfIdf(tdm)
+M <- t(as.matrix(tds1))
+g <- cor(M)
+diag(g) <- 0
+g[is.na(g)] <- 0
+g[g < 0.4 ] <- 0
+rownames(g) <- colnames(g) <- Terms(tds1)
+library(sna)
+library(igraph)
+sna::gplot(g, label=colnames(g), gmode="graph",
+           label.cex=0.6, vertex.cex=1)
+
+g1 <- graph_from_adjacency_matrix(g, weighted=T, mode = 'lower')
+g1
+set.seed(12345)
+windowsFonts(malgun=windowsFont("맑은 고딕"))
+windowsFonts()
+plot(g1, edge.curved=.1, vertex.label.cex=0.7, edge.color="grey", edge.arrow.size=0.3,
+     vertex.frame.color="grey", vertex.size=0, vertex.shape="none", vertex.color="black",
+     main=paste0("연관-키워드 network"), family="malgun")
+
+
+wc <- cluster_walktrap(g1)
+set.seed(12345)
+plot(wc, g1, edge.curved=.1, vertex.label.cex=0.7, edge.color="grey",
+     vertex.frame.color="grey", vertex.size=0, vertex.shape="none", vertex.color="black",
+     main=paste0("연관-키워드 네트워크 커뮤니티"))
+
+#### LDA tuning
+# install.packages("ldatuning")
+# install.packages("devtools")
+# devtools::install_github("nikita-moor/ldatuning")
+
+library("ldatuning")
+
+library("topicmodels")
+
+result <- FindTopicsNumber(
+  cpsdtm,
+  topics = seq(from = 2, to = 15, by = 1),
+  metrics = c("Griffiths2004", "CaoJuan2009", "Arun2010", "Deveaud2014"),
+  method = "Gibbs",
+  control = list(seed = 77),
+  mc.cores = 2L,
+  verbose = TRUE
+)
+FindTopicsNumber_plot(result)
+
+dtm2 = Dtm[1:10,]
+result <- FindTopicsNumber(
+  dtm2,
+  topics = seq(from = 2, to = 15, by = 1),
+  # metrics = c("text"),
+  method = "Gibbs",
+  control = list(seed = 77),
+  mc.cores = 2L,
+  verbose = TRUE
+)
+FindTopicsNumber_plot(result)
+
+##### LDA
+gg = function(x){
+  return(gsub('\\w*(그것|때문|그거|하지|말씀|우리|하게|번째|대통령|생각|부분|이야기|하시|그걸|이번|들이|저것|이걸|사실|얘기|입장|질문|이것|다음|확인|후보|대한|민국|그때|거기|당시)\\w*', '', x))
+}
+lda.sy = function(x){
+  y=removeNumbers(x)
+  y=gg(y)
+  y=extractNoun(y)
+  cps = Corpus(VectorSource(y))
+  Noun_cps = tm_map(cps, removeWords, c('character'))
+  cpsdtm = DocumentTermMatrix(Noun_cps)
+  cpsdtm = cpsdtm[apply(cpsdtm,1,sum)!=0, ]
+  lda = LDA(cpsdtm, control = list(seed = 100), k = 3)
+  return(terms(lda, 12))
+}
+ctm.sy = function(x){
+  y=removeNumbers(x)
+  y=gg(y)
+  y=extractNoun(y)
+  cps = Corpus(VectorSource(y))
+  Noun_cps = tm_map(cps, removeWords, c('character'))
+  cpsdtm = DocumentTermMatrix(Noun_cps)
+  cpsdtm = cpsdtm[apply(cpsdtm,1,sum)!=0, ]
+  ctm = CTM(cpsdtm, control = list(seed = 123), k = 3)
+  return(terms(ctm, 12))
+}
+#####
+a = removeNumbers(dt$Body)
+a1 = removeNumbers(data1$Body)
+a2 = removeNumbers(data2$Body)
+a3 = removeNumbers(data3$Body)
+a4 = removeNumbers(data4$Body)
+### 
+lda.sy(a4)
+### 5.
+neg = subset(dt$Body, dt$Section=='negative'|dt$Status=='negative')
+lda.sy(neg)
+ctm.sy(neg)
+### 6.
+moon2 = subset(dt$Body, dt$To=='문재인')
+lda.sy(moon2)
+ctm.sy(moon2)
+
+###########EDA
+dt = read.csv('data1/dd.csv', head=T, stringsAsFactors = T)
+dd = dt
+dd$X = NULL
+dd$Body = NULL
+### 2.1
+ggplot(dd,aes(x=From,fill=From))+
+  geom_bar( aes(y = (..count..)/sum(..count..), fill=index) )
+
+dd = subset(dd, To!='negative')
+ggplot(dd,aes(x=To,fill=To))+
+  geom_bar( aes(y = (..count..)/sum(..count..), fill=index) )
+library(ggplot2)
+ggplot(dd,aes(x=Status))+
+  geom_bar( aes(y = (..count..)/sum(..count..), fill=index) )
+
+ggplot(dd,aes(x=Status,fill=Status))+
+  geom_bar( aes(y = (..count..)/sum(..count..), fill=index) )
+
+### 2.2
+ggplot(dd,aes(x=index))+
+  geom_bar( aes(y = (..count..)/sum(..count..), fill=From) )
+
+ggplot(dd,aes(x=index))+
+  geom_bar( aes(y = (..count..)/sum(..count..), fill=To) )
+
+### negative
+ggplot(dd,aes(x=index))+
+  geom_bar( aes(y = (..count..)/sum(..count..), fill=Section) )
+# 전 회차별 후보별 negative 횟수
+neg = subset(dt, data$Section=='negative')
+neg$Body
